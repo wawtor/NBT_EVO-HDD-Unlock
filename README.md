@@ -79,13 +79,13 @@ sysetadjread --get=E2P.Networking.Bt0Addr
 sysetadjread --get=E2P.ProdLogistic.SerialNo
 ```
 
-> **Important:** `E2P.ProdLogistic.SerialNo` returns a **hex-encoded** string (e.g. `00334633313131343338`), not the human-readable serial on the unit's sticker. Use the raw hex value directly.
+> **Important:** `E2P.ProdLogistic.SerialNo` returns a **hex-encoded** string (e.g. `00303132333435363738`), not the human-readable serial on the unit's sticker. Use the raw hex value directly.
 
 ---
 
 ## Usage
 
-Run the GUI:
+Run the GUI (default when no arguments are given; requires `tkinter`):
 
 ```bash
 sudo python3 nbt_unlock.py
@@ -100,12 +100,41 @@ sudo hdparm --security-disable "<password>" /dev/sdX
 # The tool displays the exact command after a successful unlock
 ```
 
+### Command-line usage (no GUI)
+
+Everything is available from the command line, so the tool works over SSH or on a machine without a display or `tkinter`. `tkinter` is only needed for the GUI. Exit codes: `0` success, `1` operation failed, `2` usage/validation error. MACs may be given with or without `:`/`-` separators.
+
+```bash
+# List SATA drives
+python3 nbt_unlock.py list
+
+# Derive the password (no root needed); -q prints only the password
+python3 nbt_unlock.py derive --eth 00:11:22:33:44:55 --bt 001122334466 --snr 00303132333435363738
+python3 nbt_unlock.py derive -q --eth 001122334455 --bt 001122334466 --snr 00303132333435363738
+
+# Show ATA security status
+sudo python3 nbt_unlock.py status /dev/sdX
+
+# Temporary unlock (root); derive the password from the identifiers...
+sudo python3 nbt_unlock.py unlock /dev/sdX --eth 001122334455 --bt 001122334466 --snr 00303132333435363738
+# ...or supply an already-known password
+sudo python3 nbt_unlock.py unlock /dev/sdX --password "<password>"
+
+# Permanently remove the ATA password (root; asks for y/N confirmation)
+sudo python3 nbt_unlock.py disable /dev/sdX --eth 001122334455 --bt 001122334466 --snr 00303132333435363738
+# Non-interactive (required when stdin is not a TTY)
+sudo python3 nbt_unlock.py disable /dev/sdX --password "<password>" --yes
+
+# Launch the GUI explicitly
+sudo python3 nbt_unlock.py gui
+```
+
 ---
 
 ## Requirements
 
 - Linux
-- Python 3
+- Python 3 (`tkinter` only for the GUI)
 - `hdparm`
 - Drive connected via **SATA** (not USB — ATA passthrough requires direct SATA)
 - Drive must **not** be in `frozen` state (cold boot the PC with the drive connected if it is)
@@ -134,7 +163,7 @@ If you permanently remove the ATA password and then reinstall the drive, the hea
 
 ```bash
 # Unlock first (if currently locked)
-sudo python3 nbt_unlock.py
+sudo python3 nbt_unlock.py unlock /dev/sdX --eth <ETH_MAC> --bt <BT_MAC> --snr <SNR_HEX>
 
 # Re-apply the password
 sudo hdparm --security-set-pass "<password>" /dev/sdX
