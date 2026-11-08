@@ -1,21 +1,44 @@
 #!/usr/bin/env python3
 """
-BMW NBT Evo HDD ATA Security Unlock — GUI
-------------------------------------------
+BMW NBT Evo HDD ATA Security Unlock
+------------------------------------
 Unlocks an ATA-locked BMW NBT Evo hard drive connected via SATA.
-Run with: sudo python3 nbt_unlock.py
+
+GUI (default, needs tkinter):   sudo python3 nbt_unlock.py
+Command line (no tkinter):      python3 nbt_unlock.py --help
+
+  list                                   list SATA drives
+  derive  --eth MAC --bt MAC --snr HEX   print the ATA password (no root)
+  status  DEVICE                         show ATA security status
+  unlock  DEVICE (--eth/--bt/--snr | --password PWD)
+  disable DEVICE (--eth/--bt/--snr | --password PWD) [--yes]
+  gui                                    launch the GUI
+
+Exit codes: 0 success, 1 operation failed, 2 usage/validation error.
+tkinter is only required for the GUI.
 """
 
 import ctypes
 import fcntl
 import hashlib
+import argparse
 import base64
 import os
 import re
 import subprocess
+import sys
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, font as tkfont
+import types
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, font as tkfont
+    HAVE_TK = True
+except ImportError:      # headless / tkinter not installed: CLI still works
+    HAVE_TK = False
+    tk = types.SimpleNamespace(Tk=object, Frame=object, Canvas=object,
+                               StringVar=object)
+    ttk = messagebox = tkfont = None
 
 
 # ─── Low-level constants ─────────────────────────────────────────────────────
@@ -984,12 +1007,217 @@ class NbtUnlockApp(tk.Tk):
             btn.configure(state=state)
 
 
+# ─── Command-line interface ──────────────────────────────────────────────────
+
+def _err(msg: str):
+    print(msg, file=sys.stderr)
+
+
+def _cli_inputs(args) -> tuple[str, str, str] | None:
+    """Validate --eth/--bt/--snr.  Prints errors and returns None if invalid."""
+    missing = [f'--{n}' for n in ('eth', 'bt', 'snr') if getattr(args, n) is None]
+    if missing:
+        _err(f'error: missing {", ".join(missing)}')
+        return None
+    eth = normalize_mac(args.eth)
+    bt  = normalize_mac(args.bt)
+    snr = args.snr.strip()
+    ok = True
+    for label, val, elen in (('ETH MAC', eth, 12), ('BT MAC', bt, 12),
+                             ('Serial (hex)', snr, None)):
+        err = validate_hex(val, elen)
+        if err:
+            _err(f'error: {label}: {err}')
+            ok = False
+    return (eth, bt, snr) if ok else None
+
+
+def _cli_password(args) -> str | None:
+    """Return the password string from --password or derived from MAC/serial."""
+    given = any(getattr(args, n) is not None for n in ('eth', 'bt', 'snr'))
+    if args.password is not None:
+        if given:
+            _err('error: use either --password or --eth/--bt/--snr, not both')
+            return None
+        if not args.password:
+            _err('error: --password is empty')
+            return None
+        return args.password
+    inputs = _cli_inputs(args)
+    if inputs is None:
+        return None
+    return build_password(*inputs).decode()
+
+
+def _require_root() -> bool:
+    if os.geteuid() != 0:
+        _err('error: root required for ATA commands (try: sudo python3 '
+             f'{os.path.basename(sys.argv[0])} ...)')
+        return False
+    return True
+
+
+def cmd_list(args) -> int:
+    drives = list_sata_drives()
+    if not drives:
+        _err('No SATA drives found.')
+        return 1
+    for _dev, desc in drives:
+        print(desc)
+    return 0
+
+
+def cmd_derive(args) -> int:
+    inputs = _cli_inputs(args)
+    if inputs is None:
+        return 2
+    pwd = build_password(*inputs).decode()
+    if args.quiet:
+        print(pwd)
+    else:
+        print(f'ETH MAC : {inputs[0]}')
+        print(f'BT MAC  : {inputs[1]}')
+        print(f'Serial  : {inputs[2]}')
+        print(f'Password: {pwd}')
+    return 0
+
+
+def cmd_status(args) -> int:
+    print(get_drive_security_status(args.device))
+    return 0
+
+
+def cmd_unlock(args) -> int:
+    pwd = _cli_password(args)
+    if pwd is None:
+        return 2
+    if not _require_root():
+        return 2
+    print(f'ATA SECURITY UNLOCK -> {args.device}')
+    try:
+        status, host, driver, sense = send_ata_security_unlock(args.device, pwd.encode())
+    except OSError as e:
+        _err(f'error: OS error: {e}')
+        return 1
+    if status == 0 and host == 0:
+        print('Drive unlocked successfully!')
+        print(f'To remove the password permanently:\n'
+              f'  sudo hdparm --security-disable "{pwd}" {args.device}')
+        print()
+        print(get_drive_security_status(args.device))
+        return 0
+    _err(f'FAILED  (status={status} host={host} drv={driver})')
+    if sense:
+        _err(f'  sense: {sense.hex()}')
+    _err('  Possible: wrong MAC/Serial, count expired, or drive frozen.')
+    return 1
+
+
+def cmd_disable(args) -> int:
+    pwd = _cli_password(args)
+    if pwd is None:
+        return 2
+    if not _require_root():
+        return 2
+    if not args.yes:
+        if not sys.stdin.isatty():
+            _err('error: stdin is not a TTY; pass --yes to confirm non-interactively')
+            return 2
+        print(f'Permanently remove ATA password from {args.device}?')
+        print('The drive will be accessible without a password on every boot.')
+        if input('Continue? [y/N] ').strip().lower() not in ('y', 'yes'):
+            print('Aborted.')
+            return 1
+    try:
+        result = subprocess.run(['hdparm', '--security-disable', pwd, args.device],
+                                capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        _err('error: hdparm not installed')
+        return 1
+    except subprocess.TimeoutExpired:
+        _err('error: hdparm timed out')
+        return 1
+    out = (result.stdout + result.stderr).strip()
+    if result.returncode == 0:
+        print('Password removed permanently.')
+        if out:
+            print(out)
+    else:
+        _err('hdparm error:')
+        if out:
+            _err(out)
+    print()
+    print(get_drive_security_status(args.device))
+    return 0 if result.returncode == 0 else 1
+
+
+def cmd_gui(args=None) -> int:
+    if not HAVE_TK:
+        _err('error: tkinter is not installed; the GUI is unavailable.\n'
+             'Use the command-line interface instead: python3 nbt_unlock.py --help')
+        return 1
+    try:
+        app = NbtUnlockApp()
+    except tk.TclError as e:
+        _err(f'error: cannot start GUI ({e}).\n'
+             'Use the command-line interface instead: python3 nbt_unlock.py --help')
+        return 1
+    app.mainloop()
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog='nbt_unlock.py',
+        description='BMW NBT Evo HDD ATA security unlock. '
+                    'With no arguments, the GUI is launched.')
+    ap.add_argument('--gui', action='store_true', help='launch the GUI')
+    sub = ap.add_subparsers(dest='command', metavar='COMMAND')
+
+    def ident(p, required):
+        p.add_argument('--eth', metavar='MAC', help='ETH MAC (any separators)')
+        p.add_argument('--bt',  metavar='MAC', help='Bluetooth MAC (any separators)')
+        p.add_argument('--snr', metavar='HEX', help='serial number, hex-encoded')
+
+    sub.add_parser('list', help='list SATA drives').set_defaults(func=cmd_list)
+
+    p = sub.add_parser('derive', help='derive and print the ATA password (no root)')
+    ident(p, True)
+    p.add_argument('-q', '--quiet', action='store_true', help='print only the password')
+    p.set_defaults(func=cmd_derive)
+
+    p = sub.add_parser('status', help='show ATA security status of a drive')
+    p.add_argument('device', help='e.g. /dev/sdb')
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser('unlock', help='send ATA SECURITY UNLOCK (root)')
+    p.add_argument('device', help='e.g. /dev/sdb')
+    ident(p, False)
+    p.add_argument('--password', metavar='PWD', help='use this 20-char password instead')
+    p.set_defaults(func=cmd_unlock)
+
+    p = sub.add_parser('disable', help='permanently remove the ATA password (root)')
+    p.add_argument('device', help='e.g. /dev/sdb')
+    ident(p, False)
+    p.add_argument('--password', metavar='PWD', help='use this 20-char password instead')
+    p.add_argument('-y', '--yes', action='store_true', help='skip confirmation prompt')
+    p.set_defaults(func=cmd_disable)
+
+    sub.add_parser('gui', help='launch the GUI').set_defaults(func=cmd_gui)
+    return ap
+
+
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
-def main():
-    app = NbtUnlockApp()
-    app.mainloop()
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        return cmd_gui()
+    args = build_parser().parse_args(argv)
+    if args.gui or args.command is None:
+        return cmd_gui()
+    return args.func(args)
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
