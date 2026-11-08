@@ -93,6 +93,22 @@ sudo python3 nbt_unlock.py
 
 Enter your ETH MAC, BT MAC, and Serial Number into the tool. The derived password will be displayed and the unlock can be issued directly from the interface.
 
+### Using the GUI
+
+1. Paste the three values from the head unit and derive the password.
+
+   ![Identifiers filled in, password derived, drive shown as locked](docs/screenshots/derive.png)
+
+2. Pick the drive and unlock it.
+
+   ![Drive unlocked, log showing success](docs/screenshots/unlocked.png)
+
+3. The Help tab walks through getting the values.
+
+   ![Help tab](docs/screenshots/help.png)
+
+The values shown in the screenshots are placeholders, not from a real unit.
+
 The unlock is **temporary** — it resets on power cycle. To permanently remove the ATA password:
 
 ```bash
