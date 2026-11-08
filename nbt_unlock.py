@@ -37,7 +37,7 @@ try:
 except ImportError:      # headless / tkinter not installed: CLI still works
     HAVE_TK = False
     tk = types.SimpleNamespace(Tk=object, Frame=object, Canvas=object,
-                               StringVar=object)
+                               StringVar=object, Button=object)
     ttk = messagebox = tkfont = None
 
 
@@ -212,216 +212,448 @@ def validate_hex(s: str, expected_len: int | None = None) -> str | None:
     return None
 
 
+def parse_security_state(text: str) -> str:
+    """
+    Reduce hdparm -I "Security:" output to one of:
+    'frozen', 'locked', 'unlocked', 'disabled' (security not enabled), 'unknown'.
+    """
+    flags = {}
+    for line in text.splitlines():
+        s = ' '.join(line.lower().split())
+        for word in ('frozen', 'locked', 'enabled'):
+            if s == word:
+                flags[word] = True
+            elif s == 'not ' + word:
+                flags[word] = False
+    if flags.get('frozen'):
+        return 'frozen'
+    if flags.get('locked'):
+        return 'locked'
+    if flags.get('enabled'):
+        return 'unlocked'
+    if flags.get('enabled') is False:
+        return 'disabled'
+    return 'unknown'
+
+
 # ─── GUI ─────────────────────────────────────────────────────────────────────
 
-# ── BMW M Colour Palette ──────────────────────────────────────────────────────
-C_BG       = '#0E0E12'   # deep carbon black
-C_CARD     = '#17171D'   # card / panel surface
-C_CARD2    = '#1F1F28'   # inset / input well
-C_BORDER   = '#2A2A36'   # hairline borders
-C_M_BLUE   = '#1A78D4'   # BMW M blue
-C_M_PURPLE = '#6B35A0'   # BMW M violet
-C_M_RED    = '#E4002B'   # BMW M red
-C_FG       = '#EDEEF2'   # primary text
-C_FG2      = '#8A8FA0'   # secondary / dim
-C_FG3      = '#484D60'   # very muted
-C_SUCCESS  = '#00C57A'   # green
-C_WARN     = '#F0A500'   # amber
-C_ERROR    = '#E4002B'
-C_HOVER    = '#252530'   # generic hover surface
+# ── Graphite palette (one accent: green, used only on the derived password) ──
+C_BG       = '#141415'   # page
+C_DEEP     = '#0f0f10'   # header, log, code blocks
+C_CARD     = '#19191b'   # card surface
+C_RAISED   = '#232325'   # inputs, secondary buttons
+C_RAISED_H = '#2c2c2f'   # raised hover
+C_HAIR     = '#2a2a2d'   # hairline borders
+C_HAIR_HI  = '#45454a'   # focus / hover hairline
+C_FG       = '#ededed'   # primary text
+C_FG2      = '#a1a1a6'   # secondary text
+C_FG3      = '#85858b'   # muted text
+C_DIS      = '#5c5c61'   # disabled text
+C_ACCENT   = '#6be075'   # brand green: derived password only
+C_POS      = '#4cc38a'
+C_NEG      = '#e5484d'
 
-F_TITLE  = ('Helvetica', 15, 'bold')
-F_UI     = ('Helvetica', 10)
-F_UI_B   = ('Helvetica', 10, 'bold')
-F_SM     = ('Helvetica', 9)
-F_SM_B   = ('Helvetica', 9, 'bold')
-F_MONO   = ('Courier New', 10)
-F_MONO_B = ('Courier New', 11, 'bold')
-F_MONO_S = ('Courier New', 9)
+# Font families are resolved when the app starts (see _pick_fonts); sizes are
+# negative so they are pixels.
+F_SANS_FAMILIES = ('Inter', 'IBM Plex Sans', 'Segoe UI', 'SF Pro Text',
+                   'Helvetica Neue', 'Noto Sans', 'DejaVu Sans', 'Helvetica')
+F_MONO_FAMILIES = ('JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono',
+                   'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono',
+                   'Courier')
+F_UI     = ('Helvetica', -13)
+F_SM     = ('Helvetica', -12)
+F_WORD   = ('Helvetica', -16)
+F_H      = ('Helvetica', -15)
+F_MONO   = ('Courier', -13)
+F_MONO_S = ('Courier', -12)
+F_MONO_L = ('Courier', -24)
 
+_LOGO32_PNG_B64 = (
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAKa0lEQVR42o1Xe3CU1RX/nXu/'
+    '3bwJhDxJQgIhD/KAkBACEhCBQHhHYQODZvABTPHtqLW21UrRsdOOjNZxqKVUrQ5QQylVrCAg'
+    'ICCiEAhIBBMDIWyyyYa8djfJ7n7fPf1jN0vigPbM3NnZ77v3/u53zu+c3z2E2xsBEEIKQxkK'
+    'ABIAlIXGhJdGZUTlh8WGJ0qzFg5BMNxep9PmsHbWdZ7rtTsPANgHoEVIAWUoCUAB4NuB3MoE'
+    'CVKsGAByQ+PCHktbkFkekxMXqwVrcLY44GpxQJgEdLcBAjB8bBSCRwTD8Bhou9ja1vDfuj2u'
+    'VsebAL4lQWDFwn+QISZvAS5JCsWKQ2WQfLVwQ/HfJz44eYrRr4d9/59adeG9s0oGa2SOMKNm'
+    '2xnqa3choSiRT20+joZ9dcrV6kLcxITw3Mr8wmHJketaz9sildc4TlJ4wCxv54kAuJACADKT'
+    'SlKrl21fycXPlHDwiBDvIDfywq1389NdL3B0dizP+/Niftb1EsfmxfPAewBKC9a8BRuKuXzn'
+    'Sk4qSa0GkOnfW97OA1JowlCGKshbU/B5dkVu2rHfHfTWf3JZ6P26FJogkgRWjDHz0nH9RCMK'
+    'NkyBo9kBl82JltNWOKw9kGYJADR2foZwtTn54vYafcYLdyWawswrW882HxJSNPMgT4iBmAsp'
+    'DKWr9Enri/bF5SfEHP3tAb3w0Wmm+46uozHz0qF0X/hIEvraXbjw/lm0nLbi/LvVaDl9HYZb'
+    'BxFBGQoEQv66yRBCUGhMmGnfwx/pyTNSYiatL9qnDJUupDAGYYMsH1okgJD0pePPL9p2D0dl'
+    'RHsXv7Ock6ancOrsNK48vp6lSTIJYgAcPCKE0xZmcM7qiZy9Mo8TChMD7icizl6Zx/ef2sBz'
+    'Ny/kx5t/xeaIIAbgXfpBBWeUZ58HEOLHJGmxWOSuTbuM6OyYP0x9dkb5Jw/u9qbOSTNlr5qA'
+    'I8/vhynMjNi8eFzafRGsGNmrJiD3vnx4nF50X+mEMhjJM1ORtiADXQ0d6O/sQ27lJEizxI3v'
+    '7GitsWFYciQylmWLo7854J25cW6CvbY1+PSWb/ZbVlgkmJkAZM3dvNA7dn66PkC2KU9N5wer'
+    'H+Wl71s4KiOaAfCMl+Zw0ZN3sAzSBhOOAXBcfgKXbVnGo6YkBZ4t276S19Y8xmVblnGMj6Rq'
+    '7Lx0fe7mhV4AWX5sYLwld2vZlmUMwCukCLi6YEPxEPCc1RMDmw/MI0EsNBEITdlflnHsRF9G'
+    'FD9dwhnl2UPWAPDOf2spj7fkbh3gQGzpG4s7kktSGAQ1AE5EgYX564q4YEOxbxM/2I8HSd/8'
+    '0JgwLtuyjENGht58J4iJfIcFQSXPTOV5by7pABArkqalLBKSRlz/8poCQP7qBxAgpEBMXhxG'
+    'ZkajesspX4oxIDQBIQcNTYBAkGaJXrsLF7fXoOjxab70MkmwYjAz/HvT9RONigSNGDUtaZFI'
+    'mTt2fmd9B7NiFkIMqUrKUMirnISzb38NEGB4DChDQenK9zsw/P8NjwEAaDp2FYbHwKjiZCiv'
+    'ARI3K74QAmwwd9a185i70uZrEYnD8r/f8x0BEOyvkv7ajbj8BPR39qGj7gYAIG5iAqJzYhGZ'
+    'MhzBI0JAUoAEQe/X0dvqREf9DbSea4Hjejdqd57HhAcK0XyqachH+THEjUvtlL4kM1+TJpHY'
+    'c63L53S/VBARGIzkkhQ0fFaPhMJETH/xLhj9OjxOD4QmMGz0cIyakoReuwu26maEx4UjriAB'
+    'hY9Mhf2CDUdfOAilK4THR8Bpc/hkjwNKQN1NXSCTTNRIiDB3d//QU7Jvlik8CL12Fyo+roTH'
+    '4cY/Sv46ZF7xMyVo/LwBturmwLOEoiSs//oJ2C+2ob22DcPTouC0OXwfxRyQIk+PG0QUJkC+'
+    'WA9yz814SYLX5YH1VBMiEiNhCjMH3pnCzJiwpgDpS7KGrInOjoFHudF+sRXSLBEg9Y+MmUEE'
+    'aCSFSwvSwn0x8LmeBAFEcLY4EF8wCgce34s1J38By0eVOPXaMQCE/LWTERYfgYkPTYbhNWD9'
+    'sglRmdGYuWkuvnjxIFpOW5G1IhcN++swIGKDzRRiAiS5NC1IWkOjwzK7G7sYBCKigPDU772M'
+    '2X8qg+2MFbstO3Dv5w+hfMcqGG7d50aHGyQJU5+ZAb1fR1h8BM5t/QYnXjmCLEsu3D1u9Npd'
+    'Q3jl5wKHJUQQEVmFMMtzw9OiGIAaOGlIdCimPDUdRU/eAY/DjfjJieisv4E9q3bC3eOGx+mB'
+    'u8ft8xQDrjYXhCZQv/cSPnv0Y5hCTYgeH4vgyGDMemUexpal+11OAympRmZEs9fpOSfTSsdF'
+    'yCCt/NqRK2Bmis6JxayXS9F07Cq+/eAcvt9Ti64fOiA0ge7GLjiu92B8RR4Mjw42GEpXCIkK'
+    'RXdjF/69aic8DjdYMa4duYIrB+vRdbUT6UvGI2l6Cq59cSWQ4jn35ou2mubNUpfm5pTpyWuv'
+    'HKgPFZrg2X9cQMc3HYb15DUYHgPCJAOFRJgk2s7bYHgNpJVlwBwRhKDIYDiaurH3/n+hq6HD'
+    'RzwGpCYAAvo7+tB4uAGjZ45BVHo0bGesHJMTJ1Jnj+08tvHwEwCAVfvWbM1akcvjlmR5JzxQ'
+    'yABYmuQta/7AGJkVw4UPT+Wc1RNZmMRt5w0WrMXvLmeS5L3z5VKe9vysrQBAzEx3/HpWZmxe'
+    '3AVvn5eOPLdf9HX00UAtGLcgE0GRQVDGTRaTIHicHh8ZiWAONw9JOWaGFqShtaYF9gutECYJ'
+    '5TWQW5nPURnRyhRq4kPPf5rHbr6sVaBKnHz16KWFf7v7jeFjop7ube/1Ck2YoABWjEkbpiCt'
+    'LAPu7n6QFEMOMUBCVgrMQzUkJCoUH1dWwX6hFSR84mb9qkm/c1Opac/qf74GDy5VVFVIAkAW'
+    '/lBUUYV58bvLT1lPNuWdfftrXQvWNL1fx7RfzsTU52ait93H9J81BogAEGHH/HfQVd8BEMCK'
+    '9flvLdVs1c0XaradLrawxVNFVUoA4KqXKpgE9X31+6PLx85Pt094oFDT+3UdANov2X1XZk0O'
+    'leDbDJIELcQEV5sTzmaHv/yyXvr6Is1pc9hrtp1eLqToq6Iq3/0CALARipevkO0N7XWfPrK3'
+    'LHVOmn3mxjkaCfJeP9HInh43SCP8X6YYMkhDZ90NeF0ejkwd7l38nkXraeqyn9h0uExIUTeo'
+    'XRvUF9TWMiwW6T1V3Xx598WPxsxLn56/tijRZXNQXMEoPSQqlAyPQUR024aOmaF0hilE4yuH'
+    'fjCGJUXKKU+VyNod58+ef6d6EUnxLfvAjVu3ZrW1DAskfUf2q4d+eF/v14PHlI4rismJNYXF'
+    'R5A0CwWCYoN9NycG+ROOSRBMwSYVNCwIQkohBAlni8N74pUjr9vOWCtJCtuPwX+6OZVCsU8l'
+    'cxOKkh4bfWdqecLkpNiRmdEIjgqFFiQDWcGGgrfXC1erE/YLNjQeudJ29XDDHlfLzzenPxVY'
+    'snxoEbtW7TL8+Z0AoCwiObI0cnRkfnh8RKIWag73aXu/02HtsXY1dJzr6+gLtOckBfgeJVF1'
+    '+/b8f1xiFz1ssvynAAAAAElFTkSuQmCC'
+)
 
-# ── Rounded-rect helper ───────────────────────────────────────────────────────
-
-def _rrect(canvas: tk.Canvas, x1, y1, x2, y2, r=10, **kw):
-    """Fill a rounded rectangle on *canvas* using arc + rect pieces."""
-    r2 = r * 2
-    canvas.create_arc(x1,      y1,      x1+r2, y1+r2, start= 90, extent=90, style='pieslice', **kw)
-    canvas.create_arc(x2-r2,   y1,      x2,    y1+r2, start=  0, extent=90, style='pieslice', **kw)
-    canvas.create_arc(x1,      y2-r2,   x1+r2, y2,    start=180, extent=90, style='pieslice', **kw)
-    canvas.create_arc(x2-r2,   y2-r2,   x2,    y2,    start=270, extent=90, style='pieslice', **kw)
-    canvas.create_rectangle(x1+r, y1,   x2-r,  y2,    **kw)
-    canvas.create_rectangle(x1,   y1+r, x2,    y2-r,  **kw)
+_LOGO64_PNG_B64 = (
+    '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'
+)
 
 
 class Card(tk.Frame):
-    """
-    A tk.Frame that sits inside a Canvas, giving the illusion of rounded
-    corners.  Use .inner for placing child widgets.
-    The card occupies the whole parent area; call it inside a plain Frame
-    that you size via pack/grid, then call .build() once after layout.
-    """
-    _RADIUS = 10
+    """Flat panel with a 1px hairline border; put children in .inner."""
 
-    def __init__(self, parent, fill=None, outline=C_BORDER, pad=14, **kw):
-        super().__init__(parent, bg=C_BG, **kw)
-        fill = fill or C_CARD
-        self._fill = fill
-        self._outline = outline
-        self._pad = pad
-        self._cv = tk.Canvas(self, bg=C_BG, highlightthickness=0)
-        self._cv.pack(fill='both', expand=True)
-        self.inner = tk.Frame(self._cv, bg=fill)
-        self._win = self._cv.create_window(pad, pad, window=self.inner, anchor='nw')
-        self._cv.bind('<Configure>', self._redraw)
+    def __init__(self, parent, **kw):
+        super().__init__(parent, bg=C_CARD, highlightthickness=1,
+                         highlightbackground=C_HAIR, highlightcolor=C_HAIR, **kw)
+        self.inner = tk.Frame(self, bg=C_CARD)
+        self.inner.pack(fill='both', expand=True, padx=20, pady=20)
 
-    def _redraw(self, _=None):
-        self._cv.delete('bg')
-        w = self._cv.winfo_width()
-        h = self._cv.winfo_height()
-        if w < 6 or h < 6:
-            return
-        _rrect(self._cv, 1, 1, w-1, h-1, self._RADIUS,
-               fill=self._fill, outline=self._outline, tags='bg')
-        self._cv.tag_lower('bg')
-        self._cv.itemconfigure(self._win,
-                               width=w - self._pad*2,
-                               height=h - self._pad*2)
+
+class Btn(tk.Button):
+    """Flat button with fixed pixel height and colour-only hover."""
+
+    # kind: (bg, fg, hover bg, hover fg, border, hover border)
+    KINDS = {
+        'secondary': (C_RAISED, C_FG, C_RAISED_H, C_FG, C_HAIR, C_HAIR_HI),
+        'primary':   (C_FG, C_BG, '#ffffff', C_BG, C_FG, '#ffffff'),
+        'quiet':     (C_BG, C_NEG, C_RAISED, C_NEG, C_BG, C_RAISED),
+        'link':      (C_BG, C_FG2, C_BG, C_FG, C_BG, C_BG),
+    }
+
+    def __init__(self, parent, text, command, kind='secondary', height=36,
+                 bg=None):
+        c = list(self.KINDS[kind])
+        if bg is not None and kind in ('quiet', 'link'):
+            c[0] = c[4] = bg
+            if kind == 'link':
+                c[2] = bg
+                c[5] = bg
+        self._c = c
+        self._kind = kind
+        border = 1 if kind in ('secondary', 'primary') else 0
+        self._pix = tk.PhotoImage(master=parent, width=1, height=1)
+        pad = 16 if kind != 'link' else 0
+        w = tkfont.Font(root=parent, font=F_UI).measure(text) + 2 * pad + 2 * border
+        super().__init__(parent, text=text, command=command, image=self._pix,
+                         compound='center', width=w, height=height,
+                         font=F_UI, bg=c[0], fg=c[1], activebackground=c[2],
+                         activeforeground=c[3], disabledforeground=C_DIS,
+                         relief='flat', bd=0, padx=0, pady=0, cursor='hand2',
+                         highlightthickness=border, highlightbackground=c[4],
+                         highlightcolor=c[5], takefocus=0)
+        self.update_idletasks()   # Tk adds internal padding; trim to exact size
+        super().configure(width=w - (self.winfo_reqwidth() - w),
+                          height=height - (self.winfo_reqheight() - height))
+        self.bind('<Enter>', self._enter)
+        self.bind('<Leave>', self._leave)
+
+    def _enter(self, _e):
+        if str(self['state']) != 'disabled':
+            tk.Button.configure(self, highlightbackground=self._c[5])
+
+    def _leave(self, _e):
+        tk.Button.configure(self, highlightbackground=self._c[4])
+
+    def configure(self, cnf=None, **kw):
+        super().configure(cnf, **kw)
+        if 'state' in kw:
+            off = kw['state'] == 'disabled'
+            c = self._c
+            if self._kind == 'primary':
+                super().configure(bg=C_RAISED if off else c[0],
+                                  highlightbackground=C_HAIR if off else c[4])
+            if off:
+                super().configure(cursor='arrow')
+            else:
+                super().configure(cursor='hand2')
 
 
 class NbtUnlockApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('BMW NBT Evo — HDD ATA Unlock')
+        self.title('NBT Evo HDD Unlock')
         self.configure(bg=C_BG)
-        self.minsize(720, 660)
+        self.geometry('780x860')
+        self.minsize(740, 780)
         self.resizable(True, True)
         self._current_password = ''
         self._drive_map: dict[str, str] = {}
+        self._state_seq = 0
+        self._logo_imgs = []
+        self._pick_fonts()
+        self._load_logos()
         self._setup_styles()
         self._build_ui()
         self._refresh_drives()
         self._update_root_status()
 
-    # ── Styles ────────────────────────────────────────────────────────────────
+    # ── Fonts, logo, styles ───────────────────────────────────────────────────
+
+    def _pick_fonts(self):
+        global F_UI, F_SM, F_WORD, F_H, F_MONO, F_MONO_S, F_MONO_L
+        have = {f.lower(): f for f in tkfont.families(self)}
+
+        def first(cands, default):
+            for c in cands:
+                if c.lower() in have:
+                    return have[c.lower()]
+            return default
+
+        sans = first(F_SANS_FAMILIES, 'Helvetica')
+        mono = first(F_MONO_FAMILIES, 'Courier')
+        F_UI, F_SM = (sans, -13), (sans, -12)
+        F_WORD, F_H = (sans, -16), (sans, -15)
+        F_MONO, F_MONO_S, F_MONO_L = (mono, -13), (mono, -12), (mono, -24)
+
+    def _load_logos(self):
+        self._logo32 = None
+        try:
+            self._logo32 = tk.PhotoImage(master=self, data=''.join(_LOGO32_PNG_B64))
+            logo64 = tk.PhotoImage(master=self, data=''.join(_LOGO64_PNG_B64))
+            self._logo_imgs = [self._logo32, logo64]
+            self.iconphoto(True, logo64)
+        except tk.TclError:
+            pass
 
     def _setup_styles(self):
         s = ttk.Style(self)
         s.theme_use('clam')
+        self.option_add('*TCombobox*Listbox.background', C_RAISED)
+        self.option_add('*TCombobox*Listbox.foreground', C_FG)
+        self.option_add('*TCombobox*Listbox.selectBackground', C_RAISED_H)
+        self.option_add('*TCombobox*Listbox.selectForeground', C_FG)
+        self.option_add('*TCombobox*Listbox.font', F_MONO)
 
-        def cfg(name, **kw):   s.configure(name, **kw)
-        def mp(name, **kw):    s.map(name, **kw)
+        lh = tkfont.Font(root=self, font=F_MONO).metrics('linespace')
+        vpad = max(2, (36 - lh - 2) // 2)
+        s.configure('Dev.TCombobox',
+                    fieldbackground=C_RAISED, background=C_RAISED,
+                    foreground=C_FG, arrowcolor=C_FG2,
+                    bordercolor=C_HAIR, lightcolor=C_HAIR, darkcolor=C_HAIR,
+                    selectbackground=C_RAISED, selectforeground=C_FG,
+                    borderwidth=1, relief='flat', padding=(8, vpad))
+        s.map('Dev.TCombobox',
+              fieldbackground=[('readonly', C_RAISED)],
+              background=[('active', C_RAISED_H), ('readonly', C_RAISED)],
+              selectbackground=[('readonly', C_RAISED)],
+              selectforeground=[('readonly', C_FG)],
+              foreground=[('readonly', C_FG)],
+              bordercolor=[('focus', C_HAIR_HI)],
+              lightcolor=[('focus', C_HAIR_HI)],
+              darkcolor=[('focus', C_HAIR_HI)])
 
-        cfg('.',
-            background=C_BG, foreground=C_FG,
-            fieldbackground=C_CARD2, insertcolor=C_FG,
-            selectbackground=C_M_BLUE, selectforeground='#ffffff',
-            font=F_UI)
-
-        cfg('TFrame',            background=C_BG)
-        cfg('Card.TFrame',       background=C_CARD)
-        cfg('Inner.TFrame',      background=C_CARD)
-        cfg('TLabel',            background=C_BG,    foreground=C_FG,   font=F_UI)
-        cfg('Card.TLabel',       background=C_CARD,  foreground=C_FG,   font=F_UI)
-        cfg('CardDim.TLabel',    background=C_CARD,  foreground=C_FG2,  font=F_SM)
-        cfg('CardHead.TLabel',   background=C_CARD,  foreground=C_FG2,
-            font=F_SM_B)
-        cfg('Dim.TLabel',        background=C_BG,    foreground=C_FG2,  font=F_SM)
-        cfg('Mono.TLabel',       background=C_CARD,  foreground=C_SUCCESS,
-            font=F_MONO_B)
-        cfg('Warn.TLabel',       background=C_BG,    foreground=C_WARN, font=F_SM)
-        cfg('Err.TLabel',        background=C_CARD,  foreground=C_ERROR,font=F_SM)
-        cfg('Err2.TLabel',       background=C_BG,    foreground=C_ERROR,font=F_SM)
-        cfg('Ok.TLabel',         background=C_BG,    foreground=C_SUCCESS,font=F_SM)
-
-        cfg('TEntry',
-            fieldbackground=C_CARD2, foreground=C_FG,
-            insertcolor=C_FG, borderwidth=1, relief='flat', padding=(8, 6))
-        mp('TEntry',
-            fieldbackground=[('focus', '#23253A')],
-            bordercolor=[('focus', C_M_BLUE), ('!focus', C_BORDER)])
-
-        cfg('TCombobox',
-            fieldbackground=C_CARD2, foreground=C_FG,
-            arrowcolor=C_FG2, padding=(8, 6), borderwidth=1)
-        mp('TCombobox',
-            fieldbackground=[('readonly', C_CARD2)],
-            bordercolor=[('focus', C_M_BLUE), ('!focus', C_BORDER)])
-
-        # Scrollbar
-        cfg('TScrollbar',
-            background=C_CARD2, troughcolor=C_CARD, arrowcolor=C_FG3, borderwidth=0)
-
-        # Primary (blue) button
-        cfg('Blue.TButton',
-            background=C_M_BLUE, foreground='#ffffff',
-            borderwidth=0, padding=(14, 8), font=F_UI_B, relief='flat')
-        mp('Blue.TButton',
-            background=[('active', '#2389E8'), ('disabled', '#333345')],
-            foreground=[('disabled', C_FG3)])
-
-        # Default (neutral) button
-        cfg('TButton',
-            background=C_CARD2, foreground=C_FG,
-            borderwidth=0, padding=(12, 7), font=F_UI, relief='flat')
-        mp('TButton',
-            background=[('active', C_HOVER), ('disabled', C_CARD)],
-            foreground=[('disabled', C_FG3)])
-
-        # Danger (red) button
-        cfg('Red.TButton',
-            background='#3A1018', foreground='#FFAABB',
-            borderwidth=0, padding=(14, 8), font=F_UI_B, relief='flat')
-        mp('Red.TButton',
-            background=[('active', C_M_RED)],
-            foreground=[('active', '#ffffff')])
-
-        # Tab buttons
-        cfg('Tab.TButton',
-            background=C_CARD, foreground=C_FG2,
-            borderwidth=0, padding=(18, 9), font=F_UI_B, relief='flat')
-        mp('Tab.TButton',
-            background=[('active', C_HOVER)])
-
-        cfg('ActiveTab.TButton',
-            background=C_BG, foreground=C_FG,
-            borderwidth=0, padding=(18, 9), font=F_UI_B, relief='flat')
-        mp('ActiveTab.TButton',
-            background=[('active', C_HOVER)])
+        s.configure('Log.Vertical.TScrollbar', background=C_HAIR,
+                    troughcolor=C_DEEP, bordercolor=C_DEEP, lightcolor=C_HAIR,
+                    darkcolor=C_HAIR, borderwidth=0, gripcount=0, width=10)
+        s.map('Log.Vertical.TScrollbar',
+              background=[('active', C_HAIR_HI), ('pressed', C_HAIR_HI)])
+        s.layout('Log.Vertical.TScrollbar',
+                 [('Vertical.Scrollbar.trough', {'sticky': 'ns', 'children': [
+                     ('Vertical.Scrollbar.thumb',
+                      {'expand': '1', 'sticky': 'nswe'})]})])
 
     # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
-        P = 14   # outer horizontal pad
+        # Header
+        hdr = tk.Frame(self, bg=C_DEEP, height=56)
+        hdr.pack(fill='x')
+        hdr.pack_propagate(False)
+        if self._logo32 is not None:
+            tk.Label(hdr, image=self._logo32, bg=C_DEEP, bd=0).pack(
+                side='left', padx=(20, 12))
+            word_pad = 0
+        else:
+            word_pad = 20
+        tk.Label(hdr, text='NBT Evo HDD Unlock', bg=C_DEEP, fg=C_FG,
+                 font=F_WORD).pack(side='left', padx=(word_pad, 12))
+        tk.Label(hdr, text='ATA security unlock for BMW NBT Evo drives',
+                 bg=C_DEEP, fg=C_FG2, font=F_SM).pack(side='left', pady=(2, 0))
+        tk.Frame(self, bg=C_HAIR, height=1).pack(fill='x')
 
-        # ── BMW M stripe header ───────────────────────────────────────────────
-        hdr_canvas = tk.Canvas(self, bg=C_BG, height=72, highlightthickness=0)
-        hdr_canvas.pack(fill='x')
-        hdr_canvas.bind('<Configure>', lambda e, cv=hdr_canvas: self._draw_header(cv))
-
-        # placeholder so _draw_header is called after geometry is known
-        self._hdr_canvas = hdr_canvas
-
-        # ── Root status pill ─────────────────────────────────────────────────
-        self._root_bar = tk.Label(self, text='', bg=C_BG, fg=C_WARN,
-                                  font=F_SM, anchor='w', padx=P+2)
-        self._root_bar.pack(fill='x', pady=(0, 4))
-
-        # ── Tab bar (manual, not ttk.Notebook for full styling control) ────────
-        tab_bar = tk.Frame(self, bg=C_CARD, height=40)
-        tab_bar.pack(fill='x')
-        tab_bar.pack_propagate(False)
-
-        self._tab_btns: dict[str, ttk.Button] = {}
+        # Tab bar
+        self._tab_bar = tk.Frame(self, bg=C_BG, height=41)
+        self._tab_bar.pack(fill='x')
+        self._tab_bar.pack_propagate(False)
+        self._tab_btns: dict[str, tuple[tk.Label, tk.Frame]] = {}
         self._tab_frames: dict[str, tk.Frame] = {}
-
+        self._active_tab = 'Unlock'
         for name in ('Unlock', 'Help'):
-            btn = ttk.Button(tab_bar, text=f'  {name}  ',
-                             style='Tab.TButton',
-                             command=lambda n=name: self._show_tab(n))
-            btn.pack(side='left')
-            self._tab_btns[name] = btn
+            col = tk.Frame(self._tab_bar, bg=C_BG)
+            col.pack(side='left', fill='y', padx=(20 if name == 'Unlock' else 8, 8))
+            lbl = tk.Label(col, text=name, bg=C_BG, fg=C_FG2, font=F_UI,
+                           cursor='hand2')
+            lbl.pack(expand=True)
+            under = tk.Frame(col, bg=C_BG, height=2)
+            under.pack(fill='x', side='bottom')
+            self._tab_btns[name] = (lbl, under)
+            lbl.bind('<Button-1>', lambda e, n=name: self._show_tab(n))
+            lbl.bind('<Enter>', lambda e, l=lbl: l.configure(fg=C_FG))
+            lbl.bind('<Leave>', lambda e, n=name: self._tab_leave(n))
+        tk.Frame(self, bg=C_HAIR, height=1).pack(fill='x')
 
-        # ── Tab content area ─────────────────────────────────────────────────
         self._tab_host = tk.Frame(self, bg=C_BG)
         self._tab_host.pack(fill='both', expand=True)
 
@@ -429,76 +661,42 @@ class NbtUnlockApp(tk.Tk):
         self._build_help_tab()
         self._show_tab('Unlock')
 
-        # ── Footer hint bar ──────────────────────────────────────────────────
-        foot = tk.Label(self,
-                        text='  Run with   sudo python3 nbt_unlock.py   for hardware access',
-                        bg=C_CARD, fg=C_FG3, font=F_SM, anchor='w', pady=5)
-        foot.pack(fill='x', side='bottom')
-
-    # ── Header painter ────────────────────────────────────────────────────────
-
-    def _draw_header(self, cv: tk.Canvas):
-        _P = 14
-        cv.delete('all')
-        w = cv.winfo_width()
-        if w < 10:
-            return
-        h = cv.winfo_height()
-        stripe_h = 5
-        sw = w // 3
-        # M-stripe at very top
-        cv.create_rectangle(0,      0, sw,    stripe_h, fill=C_M_BLUE,   outline='')
-        cv.create_rectangle(sw,     0, sw*2,  stripe_h, fill=C_M_PURPLE, outline='')
-        cv.create_rectangle(sw*2,   0, w,     stripe_h, fill=C_M_RED,    outline='')
-        # Title text
-        cv.create_text(_P+2, stripe_h+14, text='BMW NBT Evo',
-                       fill=C_FG, font=F_TITLE, anchor='nw')
-        cv.create_text(_P+2, stripe_h+36, text='HDD ATA Security Unlock Tool',
-                       fill=C_FG2, font=F_SM, anchor='nw')
-        # right side M badge
-        bx = w - 14
-        bw = 36
-        bs = bw // 3
-        by = stripe_h + 22
-        bh = 9
-        cv.create_rectangle(bx-bw,    by, bx-bw+bs,   by+bh, fill=C_M_BLUE,   outline='')
-        cv.create_rectangle(bx-bw+bs, by, bx-bw+bs*2, by+bh, fill=C_M_PURPLE, outline='')
-        cv.create_rectangle(bx-bw+bs*2,by,bx,         by+bh, fill=C_M_RED,    outline='')
-        cv.create_text(bx - bw//2, by + bh + 6, text='M', fill=C_FG2, font=F_SM_B)
-
-    # ── Tab switcher ─────────────────────────────────────────────────────────
+    def _tab_leave(self, name):
+        lbl, _ = self._tab_btns[name]
+        lbl.configure(fg=C_FG if name == self._active_tab else C_FG2)
 
     def _show_tab(self, name: str):
+        self._active_tab = name
         for n, f in self._tab_frames.items():
             f.pack_forget()
-        for n, b in self._tab_btns.items():
-            b.configure(style='ActiveTab.TButton' if n == name else 'Tab.TButton')
+        for n, (lbl, under) in self._tab_btns.items():
+            on = n == name
+            lbl.configure(fg=C_FG if on else C_FG2)
+            under.configure(bg=C_FG if on else C_BG)
         self._tab_frames[name].pack(fill='both', expand=True)
 
     # ── Unlock Tab ───────────────────────────────────────────────────────────
 
     def _build_unlock_tab(self):
-        P = 14
         frame = tk.Frame(self._tab_host, bg=C_BG)
         self._tab_frames['Unlock'] = frame
+        E = 20   # page edge
 
-        # ── Input card ───────────────────────────────────────────────────────
-        ic_wrap = tk.Frame(frame, bg=C_BG)
-        ic_wrap.pack(fill='x', padx=P, pady=(10, 6))
+        # ── Identifiers card ─────────────────────────────────────────────────
+        ic = Card(frame)
+        ic.pack(fill='x', padx=E, pady=(16, 0))
+        inner = ic.inner
 
-        ic = Card(ic_wrap, pad=12)
-        ic.pack(fill='x')
+        hrow = tk.Frame(inner, bg=C_CARD)
+        hrow.grid(row=0, column=0, columnspan=3, sticky='ew', pady=(0, 12))
+        tk.Label(hrow, text='Drive identifiers', bg=C_CARD, fg=C_FG,
+                 font=F_UI).pack(side='left')
+        tk.Label(hrow, text='From the head unit over SSH, see Help', bg=C_CARD,
+                 fg=C_FG3, font=F_SM).pack(side='left', padx=(12, 0))
 
-        # header row inside card
-        hrow = tk.Frame(ic.inner, bg=C_CARD)
-        hrow.grid(row=0, column=0, columnspan=4, sticky='ew', pady=(0, 8))
-        tk.Label(hrow, text='DEVICE IDENTIFIERS', bg=C_CARD, fg=C_M_BLUE,
-                 font=F_SM_B).pack(side='left')
-        tk.Label(hrow, text='  —  from SSH: sysetadjread', bg=C_CARD,
-                 fg=C_FG3, font=F_SM).pack(side='left')
-
-        ic.inner.columnconfigure(1, weight=1)
-        ic.inner.columnconfigure(3, weight=0)
+        inner.columnconfigure(0, minsize=104)
+        inner.columnconfigure(1, weight=1)
+        inner.columnconfigure(2, minsize=250)
 
         fields = [
             ('ETH MAC',      'E2P.Networking.Eth0MacAddr',  12),
@@ -507,257 +705,259 @@ class NbtUnlockApp(tk.Tk):
         ]
         self._vars:       dict[str, tuple[tk.StringVar, int|None]] = {}
         self._err_labels: dict[str, tk.Label] = {}
+        self._hints:      dict[str, str] = {}
+        self._entries:    dict[str, tk.Entry] = {}
 
-        for row, (label, hint, elen) in enumerate(fields, start=1):
-            tk.Label(ic.inner, text=label, bg=C_CARD, fg=C_FG2,
-                     font=F_SM_B, anchor='e', width=13).grid(
-                         row=row, column=0, sticky='e', padx=(0, 8), pady=3)
+        def rp(i):   # 8px gap between rows
+            return (0 if i == 0 else 4, 4)
 
+        for i, (label, hint, elen) in enumerate(fields):
+            row = i + 1
+            tk.Label(inner, text=label, bg=C_CARD, fg=C_FG2, font=F_UI,
+                     anchor='w').grid(row=row, column=0, sticky='w', pady=rp(i))
             var = tk.StringVar()
             self._vars[label] = (var, elen)
-
-            ent = ttk.Entry(ic.inner, textvariable=var, font=F_MONO, width=30)
-            ent.grid(row=row, column=1, sticky='ew', padx=(0, 10), pady=3)
-
-            tk.Label(ic.inner, text=hint, bg=C_CARD, fg=C_FG3,
-                     font=F_SM).grid(row=row, column=2, sticky='w', pady=3)
-
-            err_lbl = tk.Label(ic.inner, text='', bg=C_CARD,
-                               fg=C_ERROR, font=F_SM)
-            err_lbl.grid(row=row, column=3, sticky='w', padx=(8, 0), pady=3)
+            box = tk.Frame(inner, bg=C_CARD, height=36)
+            box.pack_propagate(False)
+            box.grid(row=row, column=1, sticky='ew', pady=rp(i))
+            ent = tk.Entry(box, textvariable=var, font=F_MONO, width=24,
+                           bg=C_RAISED, fg=C_FG, insertbackground=C_FG,
+                           relief='flat', bd=0, highlightthickness=1,
+                           highlightbackground=C_HAIR, highlightcolor=C_HAIR_HI,
+                           selectbackground=C_HAIR_HI, selectforeground=C_FG)
+            ent.pack(fill='both', expand=True)
+            self._entries[label] = ent
+            self._hints[label] = hint
+            err_lbl = tk.Label(inner, text=hint, bg=C_CARD, fg=C_FG3,
+                               font=F_MONO_S, anchor='w', justify='left',
+                               wraplength=240)
+            err_lbl.grid(row=row, column=2, sticky='w', padx=(16, 0), pady=rp(i))
             self._err_labels[label] = err_lbl
-
             var.trace_add('write', lambda *_, l=label: self._on_field_change(l))
 
-        # device row
         drow = len(fields) + 1
-        tk.Label(ic.inner, text='SATA Device', bg=C_CARD, fg=C_FG2,
-                 font=F_SM_B, anchor='e', width=13).grid(
-                     row=drow, column=0, sticky='e', padx=(0, 8), pady=(10, 3))
-
+        tk.Label(inner, text='SATA drive', bg=C_CARD, fg=C_FG2, font=F_UI,
+                 anchor='w').grid(row=drow, column=0, sticky='w', pady=(4, 0))
         self._dev_var = tk.StringVar()
-        self._dev_combo = ttk.Combobox(ic.inner, textvariable=self._dev_var,
-                                       state='readonly', font=F_MONO, width=30)
-        self._dev_combo.grid(row=drow, column=1, sticky='ew', padx=(0, 10), pady=(10, 3))
+        dbox = tk.Frame(inner, bg=C_CARD, height=36)
+        dbox.pack_propagate(False)
+        dbox.grid(row=drow, column=1, sticky='ew', pady=(4, 0))
+        self._dev_combo = ttk.Combobox(dbox, textvariable=self._dev_var,
+                                       state='readonly', font=F_MONO, width=24,
+                                       style='Dev.TCombobox')
+        self._dev_combo.pack(fill='both', expand=True)
+        self._dev_combo.bind('<<ComboboxSelected>>',
+                             lambda _e: self._refresh_drive_state())
+        self._rescan_btn = Btn(inner, 'Rescan', self._refresh_drives, bg=C_CARD)
+        self._rescan_btn.grid(row=drow, column=2, sticky='w', padx=(16, 0),
+                              pady=(4, 0))
 
-        ref_btn = ttk.Button(ic.inner, text='⟳', width=3,
-                             command=self._refresh_drives)
-        ref_btn.grid(row=drow, column=2, sticky='w', pady=(10, 3))
+        # Drive-state readout (signature detail)
+        srow = tk.Frame(inner, bg=C_CARD)
+        srow.grid(row=drow + 1, column=1, columnspan=2, sticky='w', pady=(8, 0))
+        self._state_dot = tk.Canvas(srow, width=8, height=8, bg=C_CARD,
+                                    highlightthickness=0)
+        self._state_dot.pack(side='left', padx=(2, 8))
+        self._state_dot_id = self._state_dot.create_oval(0, 0, 7, 7, fill=C_FG3,
+                                                         outline='')
+        self._state_lbl = tk.Label(srow, text='', bg=C_CARD, fg=C_FG3,
+                                   font=F_MONO_S)
+        self._state_lbl.pack(side='left')
+        self._set_drive_state('no drive selected', C_FG3)
 
-        # ── Password card ─────────────────────────────────────────────────────
-        pc_wrap = tk.Frame(frame, bg=C_BG)
-        pc_wrap.pack(fill='x', padx=P, pady=(0, 6))
-
-        pc = Card(pc_wrap, fill=C_CARD, pad=12)
-        pc.pack(fill='x')
-
+        # ── Password card ────────────────────────────────────────────────────
+        pc = Card(frame)
+        pc.pack(fill='x', padx=E, pady=(16, 0))
         pw_top = tk.Frame(pc.inner, bg=C_CARD)
-        pw_top.pack(fill='x')
-        tk.Label(pw_top, text='DERIVED ATA PASSWORD', bg=C_CARD, fg=C_FG2,
-                 font=F_SM_B).pack(side='left')
+        pw_top.pack(fill='x', pady=(0, 12))
+        tk.Label(pw_top, text='ATA password', bg=C_CARD, fg=C_FG,
+                 font=F_UI).pack(side='left')
+        tk.Label(pw_top, text='MD5 · base64 · 20 characters', bg=C_CARD,
+                 fg=C_FG3, font=F_MONO_S).pack(side='left', padx=(12, 0))
 
-        self._copy_btn = tk.Button(pw_top, text='Copy',
-                                   bg=C_CARD2, fg=C_FG2, activebackground=C_HOVER,
-                                   activeforeground=C_FG, font=F_SM,
-                                   relief='flat', bd=0, padx=10, pady=2,
-                                   cursor='hand2', command=self._copy_password)
+        pw_row = tk.Frame(pc.inner, bg=C_CARD)
+        pw_row.pack(fill='x')
+        self._pwd_lbl = tk.Label(pw_row, text=self._EMPTY_PWD, bg=C_CARD,
+                                 fg=C_FG3, font=F_MONO_L)
+        self._pwd_lbl.pack(side='left')
+        self._copy_btn = Btn(pw_row, 'Copy', self._copy_password, height=32)
         self._copy_btn.pack(side='right')
+        self._pwd_hint = tk.Label(pc.inner, text='Fill in the identifiers and derive',
+                                  bg=C_CARD, fg=C_FG3, font=F_SM, anchor='w')
+        self._pwd_hint.pack(fill='x', pady=(4, 0))
 
-        self._pwd_lbl = tk.Label(pc.inner, text='—', bg=C_CARD,
-                                 fg=C_SUCCESS, font=F_MONO_B)
-        self._pwd_lbl.pack(anchor='w', pady=(4, 0))
-
-        # ── Action buttons ────────────────────────────────────────────────────
+        # ── Actions ──────────────────────────────────────────────────────────
         btn_wrap = tk.Frame(frame, bg=C_BG)
-        btn_wrap.pack(fill='x', padx=P, pady=(0, 6))
-
-        self._derive_btn = ttk.Button(btn_wrap, text='  Derive Password',
-                                      command=self._derive_password)
-        self._derive_btn.pack(side='left', padx=(0, 6))
-
-        self._unlock_btn = ttk.Button(btn_wrap, text='  Unlock Drive',
-                                      style='Blue.TButton',
-                                      command=self._do_unlock)
-        self._unlock_btn.pack(side='left', padx=(0, 6))
-
-        self._status_btn = ttk.Button(btn_wrap, text='  Drive Status',
-                                      command=self._query_status)
-        self._status_btn.pack(side='left', padx=(0, 6))
-
-        self._perm_btn = ttk.Button(btn_wrap, text='  Remove Password',
-                                    style='Red.TButton',
-                                    command=self._remove_password)
+        btn_wrap.pack(fill='x', padx=E, pady=(16, 0))
+        self._derive_btn = Btn(btn_wrap, 'Derive password', self._derive_password)
+        self._derive_btn.pack(side='left', padx=(0, 8))
+        self._unlock_btn = Btn(btn_wrap, 'Unlock drive', self._do_unlock,
+                               kind='primary')
+        self._unlock_btn.pack(side='left', padx=(0, 8))
+        self._status_btn = Btn(btn_wrap, 'Check status', self._query_status)
+        self._status_btn.pack(side='left')
+        self._perm_btn = Btn(btn_wrap, 'Remove password…', self._remove_password,
+                             kind='quiet')
         self._perm_btn.pack(side='right')
 
-        # thin separator
-        sep = tk.Frame(frame, bg=C_BORDER, height=1)
-        sep.pack(fill='x', padx=P, pady=(0, 4))
-
-        # ── Log area ──────────────────────────────────────────────────────────
+        # ── Log ──────────────────────────────────────────────────────────────
         log_wrap = tk.Frame(frame, bg=C_BG)
-        log_wrap.pack(fill='both', expand=True, padx=P, pady=(0, 8))
+        log_wrap.pack(fill='both', expand=True, padx=E, pady=(16, 20))
+        tk.Label(log_wrap, text='Log', bg=C_BG, fg=C_FG2, font=F_UI,
+                 anchor='w').pack(fill='x', pady=(0, 8))
 
-        tk.Label(log_wrap, text='OUTPUT LOG', bg=C_BG, fg=C_FG3,
-                 font=F_SM_B, anchor='w').pack(fill='x', pady=(0, 4))
-
-        log_cv = tk.Frame(log_wrap, bg=C_CARD, bd=0)
-        log_cv.pack(fill='both', expand=True)
+        log_box = tk.Frame(log_wrap, bg=C_DEEP, highlightthickness=1,
+                           highlightbackground=C_HAIR, highlightcolor=C_HAIR)
+        log_box.pack(fill='both', expand=True)
 
         self._log = tk.Text(
-            log_cv, height=10, wrap='word',
-            bg=C_CARD, fg=C_FG, font=F_MONO,
-            insertbackground=C_FG, relief='flat',
-            padx=10, pady=8, state='disabled',
-            selectbackground=C_M_BLUE, selectforeground='#ffffff'
-        )
-        lsb = ttk.Scrollbar(log_cv, orient='vertical', command=self._log.yview)
+            log_box, height=4, wrap='word', bg=C_DEEP, fg=C_FG2, font=F_MONO_S,
+            insertbackground=C_FG, relief='flat', bd=0, highlightthickness=0,
+            padx=12, pady=12, spacing3=2, state='disabled',
+            selectbackground=C_HAIR_HI, selectforeground=C_FG)
+        lsb = ttk.Scrollbar(log_box, orient='vertical', command=self._log.yview,
+                            style='Log.Vertical.TScrollbar')
         self._log.configure(yscrollcommand=lsb.set)
         lsb.pack(side='right', fill='y')
         self._log.pack(side='left', fill='both', expand=True)
 
-        self._log.tag_config('info',    foreground=C_FG)
-        self._log.tag_config('success', foreground=C_SUCCESS)
-        self._log.tag_config('error',   foreground=C_ERROR)
-        self._log.tag_config('warn',    foreground=C_WARN)
-        self._log.tag_config('dim',     foreground=C_FG2)
-        self._log.tag_config('key',     foreground=C_M_BLUE,
-                             font=F_MONO_B)
+        self._log.tag_config('info',    foreground=C_FG2)
+        self._log.tag_config('key',     foreground=C_FG)
+        self._log.tag_config('success', foreground=C_POS)
+        self._log.tag_config('error',   foreground=C_NEG)
+        self._log.tag_config('warn',    foreground=C_FG)
+        self._log.tag_config('dim',     foreground=C_FG3)
+        self._log.tag_config('sep',     foreground=C_HAIR_HI)
 
-        # welcome message
-        self._log_write('BMW NBT Evo  ·  ATA Security Unlock\n', 'key')
-        self._log_write('─' * 52 + '\n', 'dim')
-        self._log_write('Enter device identifiers, then click ', 'dim')
-        self._log_write('Derive Password', 'info')
-        self._log_write('.\nFor values, SSH into the head unit and run:\n\n', 'dim')
-        self._log_write('  sysetadjread --get=E2P.Networking.Eth0MacAddr\n', 'key')
-        self._log_write('  sysetadjread --get=E2P.Networking.Bt0Addr\n', 'key')
-        self._log_write('  sysetadjread --get=E2P.ProdLogistic.SerialNo\n\n', 'key')
+        self._log_line('Enter the identifiers from the head unit, then derive the password', 'info')
+        self._log_line('', 'info')
+        self._log_line('sysetadjread --get=E2P.Networking.Eth0MacAddr', 'key')
+        self._log_line('sysetadjread --get=E2P.Networking.Bt0Addr', 'key')
+        self._log_line('sysetadjread --get=E2P.ProdLogistic.SerialNo', 'key')
+
+    _EMPTY_PWD = '···· ···· ···· ···· ····'
 
     # ── Help Tab ─────────────────────────────────────────────────────────────
 
     def _build_help_tab(self):
-        P = 14
         frame = tk.Frame(self._tab_host, bg=C_BG)
         self._tab_frames['Help'] = frame
+        P = 20
 
-        # scrollable container
         canvas = tk.Canvas(frame, bg=C_BG, highlightthickness=0)
-        vsb = ttk.Scrollbar(frame, orient='vertical', command=canvas.yview)
+        vsb = ttk.Scrollbar(frame, orient='vertical', command=canvas.yview,
+                            style='Log.Vertical.TScrollbar')
         canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side='right', fill='y')
         canvas.pack(side='left', fill='both', expand=True)
 
         inner = tk.Frame(canvas, bg=C_BG)
         win_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+        wrapped: list[tk.Label] = []
 
         def _on_resize(e):
             canvas.itemconfigure(win_id, width=e.width)
+            for lb in wrapped:
+                lb.configure(wraplength=max(200, e.width - 2 * P - 16))
         canvas.bind('<Configure>', _on_resize)
         inner.bind('<Configure>', lambda e: canvas.configure(
             scrollregion=canvas.bbox('all')))
 
-        # bind mouse wheel
         def _on_wheel(e):
             canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
         canvas.bind_all('<MouseWheel>', _on_wheel)
-        # Linux scroll
         canvas.bind_all('<Button-4>', lambda e: canvas.yview_scroll(-1, 'units'))
         canvas.bind_all('<Button-5>', lambda e: canvas.yview_scroll( 1, 'units'))
 
+        tk.Frame(inner, bg=C_BG, height=16).pack()
+        self._help_n = 0
+
         def section(text):
-            tk.Label(inner, text=text, bg=C_BG, fg=C_M_BLUE,
-                     font=F_UI_B, anchor='w').pack(fill='x', padx=P, pady=(16, 4))
-            tk.Frame(inner, bg=C_M_BLUE, height=1).pack(fill='x', padx=P, pady=(0, 8))
+            if self._help_n:
+                tk.Frame(inner, bg=C_HAIR, height=1).pack(
+                    fill='x', padx=P, pady=(16, 16))
+            self._help_n += 1
+            row = tk.Frame(inner, bg=C_BG)
+            row.pack(fill='x', padx=P, pady=(0, 8))
+            tk.Label(row, text=f'{self._help_n:02d}', bg=C_BG, fg=C_FG3,
+                     font=F_MONO_S).pack(side='left', padx=(0, 12))
+            tk.Label(row, text=text, bg=C_BG, fg=C_FG, font=F_H,
+                     anchor='w').pack(side='left')
 
         def body(text):
-            tk.Label(inner, text=text, bg=C_BG, fg=C_FG2,
-                     font=F_UI, anchor='w', justify='left',
-                     wraplength=640).pack(fill='x', padx=P+4, pady=(0, 4))
+            lb = tk.Label(inner, text=text, bg=C_BG, fg=C_FG2, font=F_UI,
+                          anchor='w', justify='left', wraplength=640)
+            lb.pack(fill='x', padx=P, pady=(0, 8))
+            wrapped.append(lb)
 
         def cmd_block(label, cmd):
-            """A labeled copyable command block."""
-            blk = Card(inner, fill=C_CARD2, pad=10)
+            lbl_row = tk.Frame(inner, bg=C_BG)
+            lbl_row.pack(fill='x', padx=P, pady=(0, 4))
+            tk.Label(lbl_row, text=label, bg=C_BG, fg=C_FG3,
+                     font=F_SM).pack(side='left')
+            Btn(lbl_row, 'Copy', lambda c=cmd: self._copy_text(c), kind='link',
+                height=20).pack(side='right')
+            blk = tk.Frame(inner, bg=C_DEEP, highlightthickness=1,
+                           highlightbackground=C_HAIR, highlightcolor=C_HAIR)
             blk.pack(fill='x', padx=P, pady=(0, 8))
-
-            lbl_row = tk.Frame(blk.inner, bg=C_CARD2)
-            lbl_row.pack(fill='x', pady=(0, 4))
-            tk.Label(lbl_row, text=label.upper(), bg=C_CARD2, fg=C_FG3,
-                     font=F_SM_B).pack(side='left')
-
-            copy_btn = tk.Button(lbl_row, text='Copy',
-                                 bg=C_CARD, fg=C_FG2,
-                                 activebackground=C_HOVER, activeforeground=C_FG,
-                                 font=F_SM, relief='flat', bd=0,
-                                 padx=8, pady=1, cursor='hand2',
-                                 command=lambda c=cmd: self._copy_text(c))
-            copy_btn.pack(side='right')
-
-            tk.Label(blk.inner, text=cmd, bg=C_CARD2, fg=C_M_BLUE,
-                     font=F_MONO, anchor='w', justify='left').pack(fill='x')
+            tk.Label(blk, text=cmd, bg=C_DEEP, fg=C_FG, font=F_MONO_S,
+                     anchor='w', justify='left').pack(fill='x', padx=12, pady=12)
 
         def note(text):
-            tk.Label(inner, text='  •  ' + text, bg=C_BG, fg=C_FG2,
-                     font=F_SM, anchor='w', justify='left',
-                     wraplength=640).pack(fill='x', padx=P+4, pady=1)
+            lb = tk.Label(inner, text='•  ' + text, bg=C_BG, fg=C_FG2,
+                          font=F_UI, anchor='w', justify='left', wraplength=640)
+            lb.pack(fill='x', padx=P, pady=(0, 4))
+            wrapped.append(lb)
 
-        # ── Section: Connection ───────────────────────────────────────────────
-        section('1 · Connecting to the Head Unit')
+        section('Connect to the head unit')
         body('SSH into the BMW NBT Evo head unit.  Default port is 22 or 2222, '
              'depending on firmware.  Use the Ethernet port on the back of the unit '
              'or the OBD-II diagnostic port with a BMW ENET cable.')
         cmd_block('SSH command', 'ssh root@192.168.1.x   (or via ENET: 169.254.x.x)')
 
-        # ── Section: Reading values ────────────────────────────────────────────
-        section('2 · Reading Device Identifiers')
+        section('Read the device identifiers')
         body('Run each command below on the head unit shell.  Paste the raw output '
-             'directly into the field — colons, dashes, and spaces are stripped automatically.')
-
-        cmd_block('Ethernet MAC  →  ETH MAC field',
+             'directly into the field.  Colons, dashes, and spaces are stripped automatically.')
+        cmd_block('Ethernet MAC, goes in ETH MAC',
                   'sysetadjread --get=E2P.Networking.Eth0MacAddr')
         body('Expected output:  E2P.Networking.Eth0MacAddr = 001122334455')
-
-        cmd_block('Bluetooth MAC  →  BT MAC field',
+        cmd_block('Bluetooth MAC, goes in BT MAC',
                   'sysetadjread --get=E2P.Networking.Bt0Addr')
         body('Expected output:  E2P.Networking.Bt0Addr = 001122334466')
-
-        cmd_block('Serial Number  →  Serial (hex) field',
+        cmd_block('Serial number, goes in Serial (hex)',
                   'sysetadjread --get=E2P.ProdLogistic.SerialNo')
         body('Expected output:  E2P.ProdLogistic.SerialNo = 00303132333435363738\n'
              'Paste the full hex string exactly as shown (20 hex chars = 10 bytes).')
 
-        # ── Section: Running the tool ──────────────────────────────────────────
-        section('3 · Running the Unlock Tool')
+        section('Run the unlock tool')
         body('Root is required to send ATA commands via SG_IO.')
         cmd_block('Launch with root', 'sudo python3 nbt_unlock.py')
 
-        # ── Section: Drive prep ────────────────────────────────────────────────
-        section('4 · Drive Preparation')
-        note('The drive must not be in a FROZEN state.  Power off the PC completely, '
-             'connect the NBT HDD via SATA, then power on — do NOT hot-plug it.')
+        section('Prepare the drive')
+        note('The drive must not be in a frozen state.  Power off the PC completely, '
+             'connect the NBT HDD via SATA, then power on.  Do not hot-plug it.')
         note('If hdparm shows  "frozen"  then the drive cannot be unlocked until '
              'a fresh cold boot is performed with the drive already attached.')
         note('Each wrong password attempt decrements the security counter.  After '
              '5 failures the counter may freeze.  Power cycle the drive to reset it.')
 
-        # ── Section: Permanent removal ─────────────────────────────────────────
-        section('5 · Permanently Remove the Password')
-        body('The "Unlock Drive" button is temporary — it resets on every power cycle.  '
-             'After a successful unlock, click "Remove Password" or run:')
+        section('Remove the password permanently')
+        body('The "Unlock drive" button is temporary and resets on every power cycle.  '
+             'After a successful unlock, click "Remove password" or run:')
         cmd_block('hdparm command',
                   'sudo hdparm --security-disable <password> /dev/sdX')
         note('Replace <password> with the 20-char derived password shown in the app.')
-        note('This permanently disables ATA security on the drive — no password needed '
-             'on subsequent boots.')
+        note('This permanently disables ATA security on the drive.  No password is '
+             'needed on subsequent boots.')
 
-        # ── Section: Password algorithm ────────────────────────────────────────
-        section('6 · Password Algorithm (Reference)')
+        section('Password algorithm (reference)')
         body('BMW derives the ATA password in srv-hddmgr2 (ARM binary):')
         cmd_block('Python equivalent',
                   'import hashlib, base64\n'
                   'data = bytes.fromhex(ETH) + bytes.fromhex(BT) + bytes.fromhex(SNR)\n'
                   'password = base64.b64encode(hashlib.md5(data).digest()[:15])')
 
-        tk.Frame(inner, bg=C_BG, height=24).pack()   # bottom spacer
+        tk.Frame(inner, bg=C_BG, height=24).pack()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -771,16 +971,63 @@ class NbtUnlockApp(tk.Tk):
         self._log_write(text + '\n', tag)
 
     def _log_sep(self):
-        self._log_write('─' * 52 + '\n', 'dim')
+        self._log_write('─' * 52 + '\n', 'sep')
 
     def _update_root_status(self):
-        if os.geteuid() != 0:
-            self._root_bar.configure(
-                text='  ⚠  Not running as root — hardware operations will fail.  '
-                     'Restart with:  sudo python3 nbt_unlock.py',
-                fg=C_WARN)
+        if os.geteuid() == 0:
+            return
+        bar = tk.Frame(self, bg=C_BG)
+        bar.pack(fill='x', padx=20, pady=(12, 0), before=self._tab_bar)
+        dot = tk.Canvas(bar, width=8, height=8, bg=C_BG, highlightthickness=0)
+        dot.create_oval(0, 0, 7, 7, fill=C_NEG, outline='')
+        dot.pack(side='left', padx=(0, 8))
+        tk.Label(bar, text='Not running as root, so unlock, status and password '
+                 'removal will fail', bg=C_BG, fg=C_FG2, font=F_UI).pack(side='left')
+        tk.Label(bar, text='sudo python3 nbt_unlock.py', bg=C_BG, fg=C_FG3,
+                 font=F_MONO_S).pack(side='right')
+        tk.Frame(self, bg=C_BG, height=12).pack(fill='x', before=self._tab_bar)
+
+    def _set_drive_state(self, text: str, color: str):
+        self._state_dot.itemconfigure(self._state_dot_id, fill=color)
+        self._state_lbl.configure(text=text, fg=color)
+
+    def _apply_security_state(self, sec: str):
+        st = parse_security_state(sec)
+        if st == 'locked':
+            self._set_drive_state('locked', C_NEG)
+        elif st == 'unlocked':
+            self._set_drive_state('unlocked', C_POS)
+        elif st == 'frozen':
+            self._set_drive_state(
+                'frozen · power-cycle the PC with the drive attached', C_NEG)
+        elif st == 'disabled':
+            self._set_drive_state('security not enabled', C_FG3)
         else:
-            self._root_bar.configure(text='  ✓  Running as root', fg=C_SUCCESS)
+            self._set_drive_state('state unknown', C_FG3)
+
+    def _refresh_drive_state(self):
+        self._state_seq += 1
+        seq = self._state_seq
+        device = self._get_device()
+        if not device:
+            self._set_drive_state('no drive selected', C_FG3)
+            return
+        if os.geteuid() != 0:
+            self._set_drive_state('state unknown · needs root', C_FG3)
+            return
+
+        def _thread():
+            sec = get_drive_security_status(device)
+
+            def _apply():
+                if seq == self._state_seq:
+                    self._apply_security_state(sec)
+            try:
+                self.after(0, _apply)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=_thread, daemon=True).start()
 
     def _refresh_drives(self):
         drives = list_sata_drives()
@@ -790,6 +1037,9 @@ class NbtUnlockApp(tk.Tk):
         if descriptions:
             self._dev_combo.current(0)
             self._dev_var.set(descriptions[0])
+        else:
+            self._dev_var.set('')
+        self._refresh_drive_state()
 
     def _get_device(self) -> str | None:
         desc = self._dev_var.get()
@@ -798,16 +1048,23 @@ class NbtUnlockApp(tk.Tk):
         tok = desc.strip().split()[0] if desc.strip() else ''
         return tok if tok.startswith('/dev/') else None
 
+    def _set_field_error(self, label: str, err: str | None):
+        lbl = self._err_labels[label]
+        ent = self._entries[label]
+        if err:
+            lbl.configure(text='✕ ' + err, fg=C_NEG)
+            ent.configure(highlightbackground=C_NEG, highlightcolor=C_NEG,
+                          fg=C_NEG)
+        else:
+            lbl.configure(text=self._hints[label], fg=C_FG3)
+            ent.configure(highlightbackground=C_HAIR, highlightcolor=C_HAIR_HI,
+                          fg=C_FG)
+
     def _on_field_change(self, label: str):
         var, elen = self._vars[label]
         raw = var.get()
         normalized = normalize_mac(raw) if label in ('ETH MAC', 'BT MAC') else raw.strip()
-        err = validate_hex(normalized, elen)
-        lbl = self._err_labels[label]
-        if err:
-            lbl.configure(text='✕ ' + err)
-        else:
-            lbl.configure(text='')
+        self._set_field_error(label, validate_hex(normalized, elen))
 
     def _collect_inputs(self) -> tuple[str, str, str] | None:
         results = {}
@@ -816,11 +1073,10 @@ class NbtUnlockApp(tk.Tk):
             raw = var.get()
             val = normalize_mac(raw) if label in ('ETH MAC', 'BT MAC') else raw.strip()
             err = validate_hex(val, elen)
+            self._set_field_error(label, err)
             if err:
-                self._err_labels[label].configure(text='✕ ' + err)
                 ok = False
             else:
-                self._err_labels[label].configure(text='')
                 results[label] = val
         return (results['ETH MAC'], results['BT MAC'], results['Serial (hex)']) if ok else None
 
@@ -828,12 +1084,17 @@ class NbtUnlockApp(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(text)
 
+    def _show_password(self, pwd_str: str):
+        grouped = ' '.join(pwd_str[i:i + 4] for i in range(0, len(pwd_str), 4))
+        self._pwd_lbl.configure(text=grouped, fg=C_ACCENT)
+        self._pwd_hint.configure(text='Copy it, or unlock the drive directly')
+
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def _derive_password(self):
         inputs = self._collect_inputs()
         if inputs is None:
-            self._log_line('⚠  Fix validation errors before deriving.', 'warn')
+            self._log_line('!  Fix validation errors before deriving.', 'warn')
             return
         eth, bt, snr = inputs
         try:
@@ -842,7 +1103,7 @@ class NbtUnlockApp(tk.Tk):
             self._log_line(f'✕  {e}', 'error')
             return
         pwd_str = pwd.decode()
-        self._pwd_lbl.configure(text=pwd_str)
+        self._show_password(pwd_str)
         self._current_password = pwd_str
         self._log_sep()
         self._log_write('ETH   ', 'dim');  self._log_line(eth, 'info')
@@ -852,8 +1113,8 @@ class NbtUnlockApp(tk.Tk):
         self._log_line('')
 
     def _copy_password(self):
-        pwd = self._pwd_lbl.cget('text')
-        if pwd and pwd != '—':
+        pwd = self._current_password
+        if pwd:
             self.clipboard_clear()
             self.clipboard_append(pwd)
             self._log_line('  Copied password to clipboard.', 'dim')
@@ -861,11 +1122,11 @@ class NbtUnlockApp(tk.Tk):
     def _do_unlock(self):
         inputs = self._collect_inputs()
         if inputs is None:
-            self._log_line('⚠  Fix validation errors.', 'warn')
+            self._log_line('!  Fix validation errors.', 'warn')
             return
         device = self._get_device()
         if not device:
-            self._log_line('⚠  No device selected.', 'warn')
+            self._log_line('!  No device selected.', 'warn')
             return
         if os.geteuid() != 0:
             self._log_line('✕  Root required for ATA commands.', 'error')
@@ -877,11 +1138,11 @@ class NbtUnlockApp(tk.Tk):
             self._log_line(f'✕  {e}', 'error')
             return
         pwd_str = pwd.decode()
-        self._pwd_lbl.configure(text=pwd_str)
+        self._show_password(pwd_str)
         self._current_password = pwd_str
         self._lock_buttons(True)
         self._log_sep()
-        self._log_write('ATA SECURITY UNLOCK → ', 'dim')
+        self._log_write('ATA security unlock → ', 'dim')
         self._log_line(device, 'key')
 
         def _thread():
@@ -897,7 +1158,7 @@ class NbtUnlockApp(tk.Tk):
     def _on_unlock_done(self, device, pwd_str, status, host, driver, sense):
         self._lock_buttons(False)
         if status == 0 and host == 0:
-            self._log_line('✓  Drive unlocked successfully!', 'success')
+            self._log_line('✓  Drive unlocked successfully', 'success')
             self._log_write('  hdparm disable: ', 'dim')
             self._log_line(f'sudo hdparm --security-disable "{pwd_str}" {device}', 'key')
             sec = get_drive_security_status(device)
@@ -905,11 +1166,13 @@ class NbtUnlockApp(tk.Tk):
                 self._log_line('')
                 for line in sec.splitlines():
                     self._log_line('  ' + line, 'info')
+                self._apply_security_state(sec)
         else:
-            self._log_line(f'✕  FAILED  (status={status} host={host} drv={driver})', 'error')
+            self._log_line(f'✕  Failed  (status={status} host={host} drv={driver})', 'error')
             if sense:
                 self._log_line(f'  sense: {sense.hex()}', 'error')
             self._log_line('  Possible: wrong MAC/Serial, count expired, or drive frozen.', 'warn')
+            self._refresh_drive_state()
         self._log_line('')
 
     def _on_unlock_error(self, msg: str):
@@ -919,7 +1182,7 @@ class NbtUnlockApp(tk.Tk):
     def _query_status(self):
         device = self._get_device()
         if not device:
-            self._log_line('⚠  No device selected.', 'warn')
+            self._log_line('!  No device selected.', 'warn')
             return
         self._log_sep()
         self._log_write('Security status → ', 'dim')
@@ -942,21 +1205,25 @@ class NbtUnlockApp(tk.Tk):
                 tag = 'info'
             self._log_line('  ' + line, tag)
         self._log_line('')
+        if os.geteuid() == 0:
+            self._apply_security_state(sec)
+        else:
+            self._refresh_drive_state()
 
     def _remove_password(self):
         pwd_str = self._current_password
         if not pwd_str:
-            self._log_line('⚠  Derive or unlock first to get the password.', 'warn')
+            self._log_line('!  Derive or unlock first to get the password.', 'warn')
             return
         device = self._get_device()
         if not device:
-            self._log_line('⚠  No device selected.', 'warn')
+            self._log_line('!  No device selected.', 'warn')
             return
         if os.geteuid() != 0:
             self._log_line('✕  Root required.', 'error')
             return
         confirm = messagebox.askyesno(
-            'Confirm Permanent Removal',
+            'Confirm permanent removal',
             f'Permanently remove ATA password from:\n\n  {device}\n\n'
             f'Password: {pwd_str}\n\n'
             'The drive will be accessible without a password on every boot.\n\nContinue?',
@@ -998,6 +1265,7 @@ class NbtUnlockApp(tk.Tk):
             self._log_line('')
             for line in sec.splitlines():
                 self._log_line('  ' + line, 'info')
+            self._apply_security_state(sec)
         self._log_line('')
 
     def _lock_buttons(self, locked: bool):
@@ -1100,7 +1368,7 @@ def cmd_unlock(args) -> int:
         _err(f'error: OS error: {e}')
         return 1
     if status == 0 and host == 0:
-        print('Drive unlocked successfully!')
+        print('Drive unlocked')
         print(f'To remove the password permanently:\n'
               f'  sudo hdparm --security-disable "{pwd}" {args.device}')
         print()
